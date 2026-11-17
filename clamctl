@@ -121,6 +121,8 @@ cmd_install() {
   src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
   launchctl bootout "system/$LABEL" 2>/dev/null || true
+  # bootout can return before launchd drops the service; bootstrapping before then fails with error 5.
+  for _ in {1..10}; do launchctl print "system/$LABEL" >/dev/null 2>&1 || break; sleep 0.5; done
   if [[ $src != "$BIN" ]]; then
     install -d "${BIN%/*}"
     install -m 755 -o root -g wheel "$src" "$BIN"
