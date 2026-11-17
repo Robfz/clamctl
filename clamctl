@@ -3,7 +3,10 @@
 # See `clamctl help`.
 set -u
 
+VERSION=0.1.0
 LABEL=com.robfz.clamctl
+BIN=/usr/local/bin/clamctl
+PLIST=/Library/LaunchDaemons/$LABEL.plist
 LOG=/var/log/clamctl.log
 MODE_FILE=/var/db/clamctl/mode
 INTERVAL=10
@@ -21,7 +24,10 @@ Usage: clamctl <command>
   on          Always stay awake, even on battery (sudo)
   off         Never block sleep, even on AC power (sudo)
   auto        Stay awake only on AC power; the default (sudo)
+  install     Install to /usr/local/bin and start the daemon (sudo)
+  uninstall   Stop the daemon and remove everything (sudo)
   daemon      Run the background loop; started by launchd (root)
+  version     Show version
   help        Show this help
 EOF
 }
@@ -105,12 +111,67 @@ cmd_daemon() {
   done
 }
 
+cmd_install() {
+  require_root install
+  set -e
+  local src
+  src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+  launchctl bootout "system/$LABEL" 2>/dev/null || true
+  if [[ $src != "$BIN" ]]; then
+    install -d "${BIN%/*}"
+    install -m 755 -o root -g wheel "$src" "$BIN"
+  fi
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BIN</string>
+    <string>daemon</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$LOG</string>
+</dict>
+</plist>
+EOF
+  chown root:wheel "$PLIST"
+  chmod 644 "$PLIST"
+  launchctl bootstrap system "$PLIST"
+  sleep 1
+  echo "clamctl $VERSION installed"
+  cmd_status
+}
+
+cmd_uninstall() {
+  require_root uninstall
+  launchctl bootout "system/$LABEL" 2>/dev/null || true
+  rm -f "$PLIST" "$BIN"
+  rm -rf "${MODE_FILE%/*}"
+  # The daemon resets this on stop; repeated here in case it wasn't running.
+  pmset -a disablesleep 0
+  echo "clamctl uninstalled; disablesleep=0"
+}
+
 case ${1:-help} in
   status) cmd_status ;;
   thermal) cmd_thermal ;;
   log) shift; cmd_log "$@" ;;
   on|off|auto) cmd_set_mode "$1" ;;
+  install) cmd_install ;;
+  uninstall) cmd_uninstall ;;
   daemon) cmd_daemon ;;
+  version|-v|--version) echo "clamctl $VERSION" ;;
   help|-h|--help) usage ;;
   *) usage >&2; exit 1 ;;
 esac

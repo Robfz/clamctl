@@ -1,15 +1,16 @@
 #!/bin/bash
+# Installs the latest clamctl release:
+#   curl -fsSL https://github.com/Robfz/clamctl/releases/latest/download/install.sh | sudo bash
 set -euo pipefail
-[[ $EUID -eq 0 ]] || { echo "run with sudo" >&2; exit 1; }
-cd "$(dirname "$0")"
 
-LABEL=com.robfz.clamctl
-PLIST=/Library/LaunchDaemons/$LABEL.plist
+main() {
+  [[ $EUID -eq 0 ]] || { echo "run with sudo: curl -fsSL <url> | sudo bash" >&2; exit 1; }
+  local tmp
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' EXIT
+  curl -fsSL https://github.com/Robfz/clamctl/releases/latest/download/clamctl -o "$tmp"
+  bash "$tmp" install
+}
 
-launchctl bootout "system/$LABEL" 2>/dev/null || true
-install -d /usr/local/bin
-install -m 755 -o root -g wheel clamctl /usr/local/bin/clamctl
-install -m 644 -o root -g wheel "$LABEL.plist" "$PLIST"
-launchctl bootstrap system "$PLIST"
-sleep 1
-/usr/local/bin/clamctl status
+# Called on the last line so a truncated download runs nothing.
+main

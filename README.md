@@ -40,15 +40,20 @@ The default `auto` mode can be overridden with `on` (always awake) or `off` (nev
 ## Install
 
 ```sh
-git clone https://github.com/Robfz/clamctl.git
-cd clamctl
-sudo ./install.sh
+curl -fsSL https://github.com/Robfz/clamctl/releases/latest/download/install.sh | sudo bash
 ```
 
 On a remote Mac:
 
 ```sh
-ssh -t mac 'git clone https://github.com/Robfz/clamctl.git /tmp/clamctl && sudo /tmp/clamctl/install.sh'
+ssh -t mac 'curl -fsSL https://github.com/Robfz/clamctl/releases/latest/download/install.sh | sudo bash'
+```
+
+From a clone:
+
+```sh
+git clone https://github.com/Robfz/clamctl.git
+sudo ./clamctl/clamctl install
 ```
 
 This installs:
@@ -56,16 +61,21 @@ This installs:
 - `/usr/local/bin/clamctl`: the CLI and daemon
 - `/Library/LaunchDaemons/com.robfz.clamctl.plist`: starts the daemon at boot and restarts it if it exits
 
+Re-running either install command upgrades in place.
+
 ## Usage
 
 ```
-clamctl status        Daemon state, mode, disablesleep, power source and lid state
-clamctl thermal       CPU/GPU temperature, fan speeds and thermal pressure (needs macmon)
-clamctl log [-f]      Last 50 log lines; -f to follow
-sudo clamctl on       Always stay awake, even on battery
-sudo clamctl off      Never block sleep, even on AC power
-sudo clamctl auto     Stay awake only on AC power (default)
-clamctl help          Show help
+clamctl status           Daemon state, mode, disablesleep, power source and lid state
+clamctl thermal          CPU/GPU temperature, fan speeds and thermal pressure (needs macmon)
+clamctl log [-f]         Last 50 log lines; -f to follow
+sudo clamctl on          Always stay awake, even on battery
+sudo clamctl off         Never block sleep, even on AC power
+sudo clamctl auto        Stay awake only on AC power (default)
+sudo clamctl install     Install to /usr/local/bin and start the daemon
+sudo clamctl uninstall   Stop the daemon and remove everything
+clamctl version          Show version
+clamctl help             Show help
 ```
 
 - `on`, `off` and `auto` take effect immediately and persist across reboots. The mode is stored in `/var/db/clamctl/mode`.
@@ -83,7 +93,7 @@ The log is at `/var/log/clamctl.log`.
 ## Uninstall
 
 ```sh
-sudo ./uninstall.sh
+sudo clamctl uninstall
 ```
 
 This stops the daemon, removes the installed files and the stored mode, and resets `disablesleep` to 0.
@@ -96,6 +106,13 @@ This stops the daemon, removes the installed files and the stored mode, and rese
 - Unplugging power while the lid is closed in `auto` mode puts the Mac to sleep, even if an external display is attached.
 - The display still sleeps on its normal schedule.
 - A closed MacBook dissipates heat less effectively. Keep an eye on `clamctl thermal` under sustained load.
+
+## Releasing
+
+1. Bump `VERSION` in `clamctl`, commit and push.
+2. `gh release create vX.Y.Z clamctl install.sh --generate-notes`
+
+`install.sh` always installs the `clamctl` attached to the latest release.
 
 ## License
 
