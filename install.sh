@@ -5,7 +5,7 @@ set -euo pipefail
 
 main() {
   [[ $EUID -eq 0 ]] || { echo "run with sudo: curl -fsSL <url> | sudo bash" >&2; exit 1; }
-  local tmp
+  # Global, not local: the EXIT trap runs after main has returned.
   tmp=$(mktemp)
   trap 'rm -f "$tmp"' EXIT
   curl -fsSL https://github.com/Robfz/clamctl/releases/latest/download/clamctl -o "$tmp"
