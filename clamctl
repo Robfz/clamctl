@@ -1,0 +1,116 @@
+#!/bin/bash
+# Keeps a MacBook awake, including with the lid closed, while on AC power.
+# See `clamctl help`.
+set -u
+
+LABEL=com.robfz.clamctl
+LOG=/var/log/clamctl.log
+MODE_FILE=/var/db/clamctl/mode
+INTERVAL=10
+
+# Non-interactive SSH sessions don't get Homebrew on PATH.
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+usage() {
+  cat <<'EOF'
+Usage: clamctl <command>
+
+  status      Daemon state, mode, disablesleep, power source and lid state
+  thermal     CPU/GPU temperature, fan speeds and thermal pressure (needs macmon)
+  log [-f]    Last 50 log lines; -f to follow
+  on          Always stay awake, even on battery (sudo)
+  off         Never block sleep, even on AC power (sudo)
+  auto        Stay awake only on AC power; the default (sudo)
+  daemon      Run the background loop; started by launchd (root)
+  help        Show this help
+EOF
+}
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+power_source() { pmset -g ps | grep -q "'AC Power'" && echo ac || echo battery; }
+lid_closed() { ioreg -r -k AppleClamshellState -d 1 | grep -q '"AppleClamshellState" = Yes'; }
+mode() { cat "$MODE_FILE" 2>/dev/null || echo auto; }
+require_root() { [[ $EUID -eq 0 ]] || { echo "clamctl $1: run with sudo" >&2; exit 1; }; }
+
+cmd_status() {
+  local state disablesleep lid
+  state=$(launchctl print "system/$LABEL" 2>/dev/null | awk '/^\tstate =/ {print $3; exit}')
+  disablesleep=$(pmset -g | awk '/SleepDisabled/ {v=$2} END {print v+0}')
+  lid_closed && lid=closed || lid=open
+  echo "daemon=${state:-not-loaded} mode=$(mode) disablesleep=$disablesleep power=$(power_source) lid=$lid"
+}
+
+cmd_thermal() {
+  command -v macmon >/dev/null || { echo "macmon not found: brew install macmon" >&2; exit 1; }
+  local cpu gpu fans level
+  # Fanless models (e.g. MacBook Air) report an empty fans array.
+  read -r cpu gpu fans < <(macmon pipe -s 1 -i 200 | jq -r '
+    "\(.temp.cpu_temp_avg) \(.temp.gpu_temp_avg) " +
+    (if (.fans // []) == [] then "none" else ([.fans[].rpm | tostring] | join(",")) + "rpm" end)')
+  [[ -n ${cpu:-} ]] || { echo "failed to read macmon output" >&2; exit 1; }
+  # OSThermalPressureLevel values on macOS, from <libkern/OSThermalNotification.h>.
+  local levels=(nominal moderate heavy trapping sleeping)
+  level=$(notifyutil -g com.apple.system.thermalpressurelevel | awk '{print $2}')
+  printf 'cpu=%.1fC gpu=%.1fC fans=%s pressure=%s\n' "$cpu" "$gpu" "$fans" "${levels[$level]:-unknown($level)}"
+}
+
+cmd_log() { tail -n 50 "$@" "$LOG"; }
+
+cmd_set_mode() {
+  require_root "$1"
+  mkdir -p "${MODE_FILE%/*}"
+  echo "$1" > "$MODE_FILE"
+  if launchctl kill SIGUSR1 "system/$LABEL" >/dev/null 2>&1; then
+    sleep 1
+    cmd_status
+  else
+    echo "mode=$1 saved, but the daemon is not running" >&2
+  fi
+}
+
+cmd_daemon() {
+  require_root daemon
+  # Never leave sleep disabled once the daemon is gone.
+  trap 'pmset -a disablesleep 0; log "stopped: disablesleep=0"; exit 0' TERM INT
+  # Sent by on/off/auto: interrupts the wait so a mode change applies immediately.
+  trap ':' USR1
+
+  log "started"
+  local prev="" cur m
+  while true; do
+    m=$(mode)
+    case $m in
+      on) cur=awake ;;
+      off) cur=normal ;;
+      *) [[ $(power_source) == ac ]] && cur=awake || cur=normal ;;
+    esac
+    if [[ $cur != "$prev" ]]; then
+      if [[ $cur == awake ]]; then
+        pmset -a disablesleep 1
+        log "mode=$m power=$(power_source): disablesleep=1"
+      else
+        pmset -a disablesleep 0
+        log "mode=$m power=$(power_source): disablesleep=0"
+        # Re-enabling sleep doesn't put an already-closed Mac to sleep.
+        if [[ $(power_source) == battery ]] && lid_closed; then
+          log "lid closed on battery: sleeping now"
+          pmset sleepnow
+        fi
+      fi
+      prev=$cur
+    fi
+    # Backgrounded so TERM and USR1 traps run without waiting out the sleep.
+    sleep "$INTERVAL" & wait $!
+    kill $! 2>/dev/null
+  done
+}
+
+case ${1:-help} in
+  status) cmd_status ;;
+  thermal) cmd_thermal ;;
+  log) shift; cmd_log "$@" ;;
+  on|off|auto) cmd_set_mode "$1" ;;
+  daemon) cmd_daemon ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 1 ;;
+esac
