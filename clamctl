@@ -46,6 +46,9 @@ cmd_status() {
   echo "daemon=${state:-not-loaded} mode=$(mode) disablesleep=$disablesleep power=$(power_source) lid=$lid"
 }
 
+# macmon reports null when no sensor has a valid reading (e.g. idle GPU on M3+).
+fmt_temp() { [[ $1 == null ]] && echo n/a || printf '%.1fC' "$1"; }
+
 cmd_thermal() {
   command -v macmon >/dev/null || { echo "macmon not found: brew install macmon" >&2; exit 1; }
   local cpu gpu fans level
@@ -57,7 +60,7 @@ cmd_thermal() {
   # OSThermalPressureLevel values on macOS, from <libkern/OSThermalNotification.h>.
   local levels=(nominal moderate heavy trapping sleeping)
   level=$(notifyutil -g com.apple.system.thermalpressurelevel | awk '{print $2}')
-  printf 'cpu=%.1fC gpu=%.1fC fans=%s pressure=%s\n' "$cpu" "$gpu" "$fans" "${levels[$level]:-unknown($level)}"
+  printf 'cpu=%s gpu=%s fans=%s pressure=%s\n' "$(fmt_temp "$cpu")" "$(fmt_temp "$gpu")" "$fans" "${levels[$level]:-unknown($level)}"
 }
 
 cmd_log() { tail -n 50 "$@" "$LOG"; }
